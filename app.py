@@ -4,7 +4,6 @@ import asyncpg
 
 app = FastAPI()
 
-# Konfiguracja bazy danych
 DATABASE_URL = "postgresql://parking:123test@localhost:5432/parking"
 
 @app.on_event("startup")
