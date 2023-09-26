@@ -191,8 +191,6 @@ async def register_exit(request_data: ExitRequest):
 
         # Update the 'rejestr_wjazdu_wyjazdu' table
 
-        #-------------------------------------------------------#
-            # UNCOMMENT BEFORE SENDING THE FILE
         register_update_query = """
         UPDATE rejestr_wjazdu_wyjazdu
         SET 
@@ -202,8 +200,7 @@ async def register_exit(request_data: ExitRequest):
         
         """
         await connection.execute(register_update_query, DateExit, PlateNumber)
-        # #-------------------------------------------------------#
-
+        
         #Add an entry to 'platnosci_jednorazowe' if it doesn't exist
         check_payment_query = """
         SELECT 1 FROM platnosci_jednorazowe WHERE numer_wydruku = $1
@@ -262,7 +259,7 @@ async def free_spots():
         #calculate number of free spots 
         free_spots = 50 - parked_all + parked_subscribtion - all_subscribtion
         
-        return {"message": f"Liczba wolnych miejsc wynosi: {free_spots}"}
+        return {"message": f"There are {free_spots} parking spots available "}
 
 
 
@@ -270,11 +267,8 @@ async def free_spots():
 
 # QUESTION: How to define date_start and date_end upfront as date type?
 
-async def get_earnings(date_start,date_end):
+async def get_earnings(date_start: date, date_end: date):
     async with app.state.pool.acquire() as connection:
-
-        date_start = datetime.strptime(date_start, "%Y-%m-%d").date()
-        date_end = datetime.strptime(date_end, "%Y-%m-%d").date()
 
         #Calculate the revenues from single payments
         earnigns_onetime_query = """
