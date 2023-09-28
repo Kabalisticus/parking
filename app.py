@@ -1,9 +1,7 @@
 
-
 from datetime import date, datetime
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from models import SubscriptionRequest, EntryRequest, ExitRequest, PaymentsRequest, Subscribtion, Payment_status, Vehicle, EntryExitRegister, Payments
+from fastapi import FastAPI
+from models import SubscriptionRequest, EntryRequest, ExitRequest, PaymentRequest
 import asyncpg
 
 tariff = 5
@@ -24,12 +22,12 @@ async def shutdown():
 
 #Register a new subscibtion
 @app.post("/payments/subscribe")
-async def register_subsctibtion(request_data: SubscriptionRequest):
+async def register_subsctibtion(subscribtion_input: SubscriptionRequest):
     async with app.state.pool.acquire() as connection:
 
-        plate_number = request_data.plate_number
-        date_start = request_data.date_start
-        date_end = request_data.date_end
+        plate_number = subscribtion_input.plate_number
+        date_start = subscribtion_input.date_start
+        date_end = subscribtion_input.date_end
 
         # UPSERT insert into pojazdy (numer_rejestracyjny) values ('1223') on CONFLICT DO NOTHING; 
         # Check if the vehicle is already in database:
@@ -64,11 +62,11 @@ async def register_subsctibtion(request_data: SubscriptionRequest):
 
 # Register a new entry on the parking
 @app.post("/register/enter")
-async def register_entry (request_data: EntryRequest):
+async def register_entry (entry_input: EntryRequest):
     async with app.state.pool.acquire() as connection:
 
-        plate_number = request_data.plate_number
-        date_entry = request_data.date_entry
+        plate_number = entry_input.plate_number
+        date_entry = entry_input.date_entry
 
         # Check if the vehicle is already in the database
         vehicyle_exists_query = "SELECT 1 FROM pojazdy WHERE numer_rejestracyjny = $1"
@@ -99,16 +97,14 @@ async def register_entry (request_data: EntryRequest):
 
 # Register the exit of the vehicle    
 @app.post("/register/exit")
-async def register_exit(request_data: ExitRequest):
+async def register_exit(exit_input: ExitRequest):
     async with app.state.pool.acquire() as connection:
 
-        plate_number = request_data.plate_number
-        date_exit = request_data.date_exit
-        date_payment = request_data.date_payment
-
+        plate_number = exit_input.plate_number
+        date_exit = exit_input.date_exit
 
         #Assign values for the variables
-        
+
         # Subscribtion end date 
         end_date_query = """
         SELECT a.data_zakonczenia::date
@@ -127,7 +123,7 @@ async def register_exit(request_data: ExitRequest):
         
         # Entry date 
         entry_date_query = """
-        SELECT rww.czas_wjazdu::date
+        SELECT rww.czas_wjazdu
         FROM rejestr_wjazdu_wyjazdu rww
         WHERE rww.numer_rejestracyjny = $1 AND rww.czas_wyjazdu IS NULL
         """
@@ -142,33 +138,29 @@ async def register_exit(request_data: ExitRequest):
         ticket_number = await connection.fetchval(
             ticket_number_query, plate_number
         )
-# Check for the subscription status on entry and exit
- 
-        subscription_status_query = """
-        SELECT
-            CASE
-                WHEN rww.czas_wjazdu BETWEEN a.data_rozpoczecia AND a.data_zakonczenia THEN TRUE
-                ELSE FALSE
-            END::BOOLEAN,
-            CASE
-                WHEN a.data_zakonczenia >= $2 THEN TRUE
-                ELSE FALSE
-            END::BOOLEAN
-        FROM rejestr_wjazdu_wyjazdu rww
-        JOIN pojazdy p ON rww.numer_rejestracyjny = p.numer_rejestracyjny
-        JOIN abonamenty a ON p.numer_rejestracyjny = a.numer_rejestracyjny
-        WHERE p.numer_rejestracyjny = $1 AND rww.czas_wyjazdu IS NULL
-        """
-        # unpacking during query execution 
-        # subscription_active_entry, subscription_active_exist = await ...
-        result  = await connection.fetchrow(
-            subscription_status_query, plate_number, date_exit
-        )
-        if result is not None:
-            subscribtion_active_entry, subscribtion_active_exit = result
-        else:
-            # Default values when no result is found
-            subscribtion_active_entry, subscribtion_active_exit = False, False  
+        # Check for the subscription status on entry and exit
+        try: 
+            subscription_status_query = """
+            SELECT
+                CASE
+                    WHEN rww.czas_wjazdu BETWEEN a.data_rozpoczecia AND a.data_zakonczenia THEN TRUE
+                    ELSE FALSE
+                END::BOOLEAN,
+                CASE
+                    WHEN a.data_zakonczenia >= $2 THEN TRUE
+                    ELSE FALSE
+                END::BOOLEAN
+            FROM rejestr_wjazdu_wyjazdu rww
+            JOIN pojazdy p ON rww.numer_rejestracyjny = p.numer_rejestracyjny
+            JOIN abonamenty a ON p.numer_rejestracyjny = a.numer_rejestracyjny
+            WHERE p.numer_rejestracyjny = $1 AND rww.czas_wyjazdu IS NULL
+            """
+            subscribtion_active_entry ,subscribtion_active_exit = await connection.fetchrow(
+                subscription_status_query, plate_number, date_exit
+            )
+        except Exception as e:
+            return f"Wrong plate number: {e}"
+        
 
         # Cases depending on subscription status
         if subscribtion_active_entry and subscribtion_active_exit:
@@ -187,36 +179,82 @@ async def register_exit(request_data: ExitRequest):
         UPDATE rejestr_wjazdu_wyjazdu
         SET 
             czas_wyjazdu = $1,
+            kwota = $3,
             status_platnosci = 'Oczekuje'
         WHERE numer_rejestracyjny = $2 AND czas_wyjazdu IS NULL
         
         """
-        await connection.execute(register_update_query, date_exit, plate_number)
+        await connection.execute(register_update_query, date_exit, plate_number,amount_to_pay)
         
-        #Add an entry to 'platnosci_jednorazowe' if it doesn't exist
-        check_payment_query = """
-        SELECT 1 FROM platnosci_jednorazowe WHERE numer_wydruku = $1
-        """
-        payment_exists = await connection.fetchval(check_payment_query, ticket_number)
-
-        if not payment_exists:
-            insert_payment_query = """
-            INSERT INTO platnosci_jednorazowe (numer_wydruku, kwota, status_platnosci, data_platnosci)
-            VALUES ($1, $2, 'Zakonczono', $3)
-            """
-            await connection.execute(
-                insert_payment_query, ticket_number, amount_to_pay, date_payment
-            )
-            return_message = "you have to pay bastardo!"
-        else:
-            return_message = "free to go "
-
-        return {"message": return_message, 
+        return {"message": "Your ticket number and parking fee are: ", 
                 "ticket_number": ticket_number,
                 "pay_amount": amount_to_pay}    
 
 
-@app.get("/payments/onetime")
+@app.post("/payments/onetime")
+async def register_payment(payment_input: PaymentRequest):
+    async with app.state.pool.acquire() as connection:
+
+        payment_value = payment_input.payment_value
+        ticket_number = payment_input.ticket_number
+        date_payment = payment_input.date_payment
+
+        # Check the Rejestr Wjazdu Wyjazdu for value to pay for parking
+        ticket_value_query = """
+        SELECT rww.kwota
+        FROM rejestr_wjazdu_wyjazdu rww
+        WHERE rww.numer_wydruku = $1
+        """
+        ticket_value = await connection.fetchval(ticket_value_query, ticket_number)
+
+        # Check if any payments were done for this ticket and sum them up
+        already_payed_query="""
+        SELECT COALESCE(SUM(kwota::decimal), 0)
+        FROM platnosci_jednorazowe p
+        WHERE p.numer_wydruku = $1 and p.status_platnosci = 'Zakonczono'
+        """
+        already_payed = await connection.fetchval(already_payed_query, ticket_number)
+
+        if already_payed is None:
+            already_payed = 0
+        
+        # Calculate the value that left to pay  
+        left_to_pay = ticket_value - already_payed
+
+        #Add a new entry on platnosci_jednorazowe table
+        insert_payment_query = """
+        INSERT INTO platnosci_jednorazowe (numer_wydruku, kwota, status_platnosci, data_platnosci)
+        VALUES ($1, $2, 'Zakonczono', $3)
+        """
+        await connection.execute(
+            insert_payment_query, ticket_number, payment_value, date_payment
+        )
+
+        if payment_value == left_to_pay:
+
+            # Update the RWW status_platnosci record  
+            update_rww_query = """
+            UPDATE rejestr_wjazdu_wyjazdu
+            SET status_platnosci = 'Zakonczono'
+            WHERE numer_wydruku = $1
+            """
+            await connection.execute(
+                update_rww_query,ticket_number
+            )
+
+            return_message = "You're free to go, Please visit us again"
+
+        elif payment_value<left_to_pay:
+
+            ticket_value=left_to_pay-payment_value
+            return_message = f"Additional payment is required. Amount due: {ticket_value}" 
+
+        elif payment_value > left_to_pay:
+            return_message = "You've overpaid. Please contact us under phone number 0700-88-07-88"
+
+        return {"message": return_message, 
+                "ticket_number": ticket_number,
+                "pay_amount": ticket_value}   
 
 
 # Calculate the number of free spots on the parking
