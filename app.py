@@ -2,7 +2,11 @@ import asyncpg
 from fastapi import FastAPI
 from datetime import date
 
+from starlette.exceptions import HTTPException 
+from starlette.status import HTTP_503_SERVICE_UNAVAILABLE, HTTP_400_BAD_REQUEST
+
 from models import SubscriptionRequest, EntryRequest, ExitRequest, PaymentRequest
+from errors import NoMatchingEntryError, NoMatchingTicketError, NoPaymentLeftError
 
 tariff = 5
 all_parking_spots = 50
@@ -35,29 +39,33 @@ async def register_subsctibtion(subscription_input: SubscriptionRequest):
     '''
     async with app.state.pool.acquire() as connection:
 
-        plate_number = subscription_input.plate_number
-        date_start = subscription_input.date_start
-        date_end = subscription_input.date_end
+        # Date order validation
+        if subscription_input.date_end <= subscription_input.date_start:
+            raise HTTPException(
+                status_code=HTTP_400_BAD_REQUEST,
+                detail="End date cannot be earlier than start date"
+            )
 
         # Add new entry to the 'pojazdy' table, do nothing when record already exists
         vehicyle_insert_query = """
         INSERT INTO pojazdy (numer_rejestracyjny)
         VALUES ($1)
         ON CONFLICT DO NOTHING"""
-        await connection.execute(vehicyle_insert_query, plate_number)
+        await connection.execute(vehicyle_insert_query, subscription_input.plate_number)
 
         # Add new entry to the 'abonamenty' table
         subscription_insert_query = """ 
         INSERT INTO abonamenty (numer_rejestracyjny, data_rozpoczecia, data_zakonczenia)
         VALUES ($1, $2, $3)
         """
-        await connection.execute(subscription_insert_query, plate_number, date_start, date_end)
+        await connection.execute(subscription_insert_query, subscription_input.plate_number,
+                                  subscription_input.date_start, subscription_input.date_end)
 
         return {
                 "message": "New subscribtion successfully registered",
-                "subscribtion_start_date:": date_start,
-                "subscribtion_end_date: ": date_end,
-                "plate_number: ": plate_number}
+                "subscribtion_start_date:": subscription_input.date_start,
+                "subscribtion_end_date: ": subscription_input.date_end,
+                "plate_number: ": subscription_input.plate_number}
 
 # Register a new entry on the parking
 @app.post("/register/enter")
@@ -73,22 +81,29 @@ async def register_entry (entry_input: EntryRequest):
     '''
     async with app.state.pool.acquire() as connection:
 
-        plate_number = entry_input.plate_number
-        date_entry = entry_input.date_entry
+        # Check if there are any free parking spots available
+        free_spots_value = await free_spots()
+        if free_spots_value["free_spots"] <= 0:
+            raise HTTPException(
+                status_code=HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No parking spots available. Please try again later"
+            )
 
         # Add new entry to the 'pojazdy' table, do nothing when record already exists
         vehicyle_insert_query = """
         INSERT INTO pojazdy (numer_rejestracyjny)
         VALUES ($1)
         ON CONFLICT DO NOTHING"""
-        await connection.execute(vehicyle_insert_query, plate_number)
+        await connection.execute(vehicyle_insert_query, entry_input.plate_number)
 
         # Add new entry to rejestr wjazdu wyjazdu table
         register_entry_insert_query = """ 
-        INSERT INTO rejestr_wjazdu_wyjazdu (numer_rejestracyjny, czas_wjazdu, czas_wyjazdu, kwota, status_platnosci)
+        INSERT INTO rejestr_wjazdu_wyjazdu
+        (numer_rejestracyjny, czas_wjazdu,czas_wyjazdu, kwota, status_platnosci)
         VALUES ($1, $2, NULL, 0, 'Oczekuje')
         """
-        await connection.execute(register_entry_insert_query, plate_number, date_entry)
+        await connection.execute(register_entry_insert_query,
+                                 entry_input.plate_number, entry_input.date_entry)
     
         return {"message": "New entry registered succesfuly"}
 
@@ -105,9 +120,7 @@ async def register_exit(exit_input: ExitRequest):
     :rtype: dict
     '''
     async with app.state.pool.acquire() as connection:
-
-        plate_number = exit_input.plate_number
-        exit_date = exit_input.exit_date
+        
 
         # Subscribtion end date 
         end_date_query = """
@@ -115,7 +128,7 @@ async def register_exit(exit_input: ExitRequest):
         FROM abonamenty a
         WHERE a.numer_rejestracyjny = $1 AND a.data_zakonczenia IS NOT NULL
         """
-        subscription_end_date = await connection.fetchval(end_date_query, plate_number)
+        subscription_end_date = await connection.fetchval(end_date_query, exit_input.plate_number)
 
         # Subscribtion start date
         start_date_query = """
@@ -123,7 +136,7 @@ async def register_exit(exit_input: ExitRequest):
         FROM abonamenty a
         WHERE a.numer_rejestracyjny = $1 AND a.data_rozpoczecia IS NOT NULL
         """
-        subscription_start_date = await connection.fetchval(start_date_query, plate_number)
+        subscription_start_date = await connection.fetchval(start_date_query, exit_input.plate_number)
         
         # Entry date 
         entry_date_query = """
@@ -131,7 +144,14 @@ async def register_exit(exit_input: ExitRequest):
         FROM rejestr_wjazdu_wyjazdu rww
         WHERE rww.numer_rejestracyjny = $1 AND rww.czas_wyjazdu IS NULL
         """
-        entry_date = await connection.fetchval(entry_date_query, plate_number)
+        entry_date = await connection.fetchval(entry_date_query, exit_input.plate_number)
+
+        # Check if there is entry record with such input data
+        if entry_date is None:
+            raise HTTPException(
+                status_code=HTTP_400_BAD_REQUEST,
+                detail="No matching entry record found. Please wait for the Police"
+            )
         
         # Ticket number 
         ticket_number_query = """
@@ -139,7 +159,14 @@ async def register_exit(exit_input: ExitRequest):
         FROM rejestr_wjazdu_wyjazdu rww
         WHERE rww.numer_rejestracyjny = $1 AND rww.czas_wyjazdu IS NULL
         """
-        ticket_number = await connection.fetchval(ticket_number_query, plate_number)
+        ticket_number = await connection.fetchval(ticket_number_query, exit_input.plate_number)
+
+        # Check if there is ticket with such input data
+        if ticket_number is None:
+                raise HTTPException(
+                status_code=HTTP_400_BAD_REQUEST,
+                detail="No matching ticket number found"
+            )
 
         # Check for the subscription status on entry
         subscription_entry_status_query = """
@@ -150,9 +177,12 @@ async def register_exit(exit_input: ExitRequest):
         rww.czas_wjazdu BETWEEN a.data_rozpoczecia AND a.data_zakonczenia
         """ 
         subscribtion_active_entry = await connection.fetchval(
-            subscription_entry_status_query, plate_number
+            subscription_entry_status_query, exit_input.plate_number
         )
-        if subscribtion_active_entry is None:
+
+        if subscribtion_active_entry is not None:
+            subscribtion_active_entry = True
+        else:
             subscribtion_active_entry = False
 
         # Check for the subscription status on exit
@@ -164,18 +194,29 @@ async def register_exit(exit_input: ExitRequest):
         $2 BETWEEN a.data_rozpoczecia AND a.data_zakonczenia
         """ 
         subscribtion_active_exit = await connection.fetchval(
-            subscription_exit_status_query, plate_number, exit_date
+            subscription_exit_status_query, exit_input.plate_number, exit_input.exit_date
         )
-        if subscribtion_active_exit is None:
-            subscribtion_active_exit = False
-            
+        if subscribtion_active_exit is not None:
+            subscribtion_active_exit = True
+        else: 
+            subscribtion_active_exit= False
+
+        #Defaults for payment cases:
+        amount_to_pay = 0.00
+        payment_status = "Oczekuje"
+        return_message = f"Ticket number: {ticket_number} Parking fee: {amount_to_pay}"
+
         # Payment cases depending on subscription status
         if subscribtion_active_entry and subscribtion_active_exit:
-            amount_to_pay = 0.00
+            return_message = "You are free to go, please visit us again!"
+            payment_status = 'Zakonczono'
+
         elif subscribtion_active_entry and not subscribtion_active_exit:
             amount_to_pay = (subscription_end_date - entry_date).days * tariff
+        
         elif not subscribtion_active_entry and not subscribtion_active_exit:
-            amount_to_pay = (exit_date - entry_date).days * tariff
+            amount_to_pay = (exit_input.exit_date - entry_date).days * tariff
+
         else:
             amount_to_pay = (subscription_start_date - entry_date).days * tariff
 
@@ -185,12 +226,12 @@ async def register_exit(exit_input: ExitRequest):
         SET 
             czas_wyjazdu = $1,
             kwota = $3,
-            status_platnosci = 'Oczekuje'
+            status_platnosci = $4
         WHERE numer_rejestracyjny = $2 AND czas_wyjazdu IS NULL
         """
-        await connection.execute(register_update_query, exit_date, plate_number,amount_to_pay)
+        await connection.execute(register_update_query, exit_input.exit_date, exit_input.plate_number, amount_to_pay, payment_status)
         
-        return {"message": f"Ticket number: {ticket_number} Parking fee: {amount_to_pay}", 
+        return {"message": return_message, 
                 "ticket_number": ticket_number,
                 "pay_amount": amount_to_pay}    
 
@@ -207,11 +248,7 @@ async def register_payment(payment_input: PaymentRequest):
     :rtype: dict
     '''
     async with app.state.pool.acquire() as connection:
-
-        payment_value = payment_input.payment_value
-        ticket_number = payment_input.ticket_number
-        date_payment = payment_input.date_payment
-
+    
 
         # Check the 'rejestr_wjazdu_wyjazdu' for value to pay for parking
         ticket_value_query = """
@@ -219,55 +256,65 @@ async def register_payment(payment_input: PaymentRequest):
         FROM rejestr_wjazdu_wyjazdu rww
         WHERE rww.numer_wydruku = $1
         """
-        ticket_value = await connection.fetchval(ticket_value_query, ticket_number)
+        ticket_value = await connection.fetchval(ticket_value_query, payment_input.ticket_number)
+        
+        # Check if the is ticket meeting those criteria
+        if ticket_value is None:
+            raise HTTPException(
+                status_code = HTTP_400_BAD_REQUEST,
+                detail = "No matching ticket number found"
+            )
 
         # Check if any payments were done for this ticket and sum them up
         already_paid_query="""
+        SELECT (
         SELECT COALESCE(SUM(kwota::decimal), 0)
         FROM platnosci_jednorazowe p
         WHERE p.numer_wydruku = $1 and p.status_platnosci = 'Zakonczono'
+        ) AS total_amount
         """
-        already_paid = await connection.fetchval(already_paid_query, ticket_number)
+        already_paid = await connection.fetchval(already_paid_query, payment_input.ticket_number)
 
-        if already_paid is None:
-            already_paid = 0
-        
         # Calculate the value that left to pay
         left_to_pay = ticket_value - already_paid
+
+        # Check if ticket has already been paid
+        if left_to_pay == 0:
+                raise HTTPException(
+                status_code = HTTP_400_BAD_REQUEST,
+                detail = "The ticket has already been paid. Check your ticket number and try again"
+            )
 
         #Add a new entry on 'platnosci_jednorazowe' table
         insert_payment_query = """
         INSERT INTO platnosci_jednorazowe (numer_wydruku, kwota, status_platnosci, data_platnosci)
         VALUES ($1, $2, 'Zakonczono', $3)
         """
-        await connection.execute(
-            insert_payment_query, ticket_number, payment_value, date_payment
-        )
+        await connection.execute(insert_payment_query, payment_input.ticket_number, 
+                                 payment_input.payment_value, payment_input.date_payment)
 
-        if payment_value == left_to_pay:
-
+        if payment_input.payment_value == left_to_pay:
+            
             # Update the 'status_platnosci' record in 'rejestr_wjazdu_wyjazdu' table  
             update_rww_query = """
             UPDATE rejestr_wjazdu_wyjazdu
             SET status_platnosci = 'Zakonczono'
             WHERE numer_wydruku = $1
             """
-            await connection.execute(
-                update_rww_query,ticket_number
-            )
+            await connection.execute(update_rww_query,payment_input.ticket_number)
 
             return_message = "You're free to go, Please visit us again"
 
-        elif payment_value<left_to_pay:
+        elif payment_input.payment_value<left_to_pay:
 
-            ticket_value=left_to_pay-payment_value
+            ticket_value=left_to_pay-payment_input.payment_value
             return_message = f"Additional payment is required. Amount due: {ticket_value}" 
 
-        elif payment_value > left_to_pay:
+        elif payment_input.payment_value > left_to_pay:
             return_message = "You've overpaid. Please contact us under phone number 0700-88-07-88"
    
         return {"message": return_message, 
-                "ticket_number": ticket_number,
+                "ticket_number": payment_input.ticket_number,
                 "pay_amount": ticket_value}   
 
 
@@ -330,6 +377,14 @@ async def get_earnings(date_start: date, date_end: date):
     '''
     async with app.state.pool.acquire() as connection:
 
+        # Date order validation 
+        if date_end <= date_start:
+            raise HTTPException(
+                status_code=HTTP_400_BAD_REQUEST,
+                detail="End date cannot be earlier than start date"
+            )
+
+
         #Calculate the revenues from single payments
         earnigns_onetime_query = """
             SELECT COALESCE(SUM(kwota), 0)
@@ -340,7 +395,8 @@ async def get_earnings(date_start: date, date_end: date):
 
         # Calculate the revenues from subscribtions
         earnings_subscribtions_query = """
-            SELECT COALESCE(SUM(EXTRACT(YEAR FROM age(data_zakonczenia, data_rozpoczecia)) * 12 + EXTRACT(MONTH FROM age(data_zakonczenia, data_rozpoczecia))) * 100, 0)
+            SELECT COALESCE(SUM(EXTRACT(YEAR FROM age(data_zakonczenia, data_rozpoczecia)) * 12 
+            + EXTRACT(MONTH FROM age(data_zakonczenia, data_rozpoczecia))) * 100, 0)
             FROM abonamenty
             WHERE data_rozpoczecia >= $1 AND data_zakonczenia <= $2
         """ 
