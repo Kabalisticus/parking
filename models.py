@@ -3,12 +3,10 @@ from pydantic import BaseModel, validator, constr, condecimal
 from uuid import UUID
 from enum import Enum
 from datetime import date
-from fastapi import FastAPI
 
 from starlette.exceptions import HTTPException 
-from starlette.status import HTTP_503_SERVICE_UNAVAILABLE, HTTP_400_BAD_REQUEST
+from starlette.status import HTTP_400_BAD_REQUEST
 
-app = FastAPI()
 
 
 class PlateNumber(BaseModel):
