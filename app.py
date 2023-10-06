@@ -6,10 +6,9 @@ from starlette.exceptions import HTTPException
 from starlette.status import HTTP_503_SERVICE_UNAVAILABLE, HTTP_400_BAD_REQUEST
 
 from models import SubscriptionRequest, EntryRequest, ExitRequest, PaymentRequest
-from errors import NoMatchingEntryError, NoMatchingTicketError, NoPaymentLeftError
 
-tariff = 5
-all_parking_spots = 50
+TARIFF = 5
+ALL_PARKING_SPOTS = 50
 
 app = FastAPI()
 
@@ -39,13 +38,6 @@ async def register_subsctibtion(subscription_input: SubscriptionRequest):
     '''
     async with app.state.pool.acquire() as connection:
 
-        # Date order validation
-        if subscription_input.date_end <= subscription_input.date_start:
-            raise HTTPException(
-                status_code=HTTP_400_BAD_REQUEST,
-                detail="End date cannot be earlier than start date"
-            )
-
         # Add new entry to the 'pojazdy' table, do nothing when record already exists
         vehicyle_insert_query = """
         INSERT INTO pojazdy (numer_rejestracyjny)
@@ -59,12 +51,12 @@ async def register_subsctibtion(subscription_input: SubscriptionRequest):
         VALUES ($1, $2, $3)
         """
         await connection.execute(subscription_insert_query, subscription_input.plate_number,
-                                  subscription_input.date_start, subscription_input.date_end)
+                                  subscription_input.start_date, subscription_input.end_date)
 
         return {
                 "message": "New subscribtion successfully registered",
-                "subscribtion_start_date:": subscription_input.date_start,
-                "subscribtion_end_date: ": subscription_input.date_end,
+                "subscribtion_start_date:": subscription_input.start_date,
+                "subscribtion_end_date: ": subscription_input.end_date,
                 "plate_number: ": subscription_input.plate_number}
 
 # Register a new entry on the parking
@@ -212,13 +204,13 @@ async def register_exit(exit_input: ExitRequest):
             payment_status = 'Zakonczono'
 
         elif subscribtion_active_entry and not subscribtion_active_exit:
-            amount_to_pay = (subscription_end_date - entry_date).days * tariff
+            amount_to_pay = (subscription_end_date - entry_date).days * TARIFF
         
         elif not subscribtion_active_entry and not subscribtion_active_exit:
-            amount_to_pay = (exit_input.exit_date - entry_date).days * tariff
+            amount_to_pay = (exit_input.exit_date - entry_date).days * TARIFF
 
         else:
-            amount_to_pay = (subscription_start_date - entry_date).days * tariff
+            amount_to_pay = (subscription_start_date - entry_date).days * TARIFF
 
         # Update the 'rejestr_wjazdu_wyjazdu' table
         register_update_query = """
@@ -279,7 +271,7 @@ async def register_payment(payment_input: PaymentRequest):
         left_to_pay = ticket_value - already_paid
 
         # Check if ticket has already been paid
-        if left_to_pay == 0:
+        if not left_to_pay:
                 raise HTTPException(
                 status_code = HTTP_400_BAD_REQUEST,
                 detail = "The ticket has already been paid. Check your ticket number and try again"
@@ -294,7 +286,7 @@ async def register_payment(payment_input: PaymentRequest):
                                  payment_input.payment_value, payment_input.date_payment)
 
         if payment_input.payment_value == left_to_pay:
-            
+
             # Update the 'status_platnosci' record in 'rejestr_wjazdu_wyjazdu' table  
             update_rww_query = """
             UPDATE rejestr_wjazdu_wyjazdu
@@ -357,13 +349,13 @@ async def free_spots():
         all_subscribtion = await connection.fetchval(all_subscribtion_query)
 
         #calculate number of free spots 
-        free_spots = all_parking_spots - parked_all + parked_subscribtion - all_subscribtion
+        free_spots = ALL_PARKING_SPOTS - parked_all + parked_subscribtion - all_subscribtion
         
         return {"free_spots": free_spots}
 
 
 @app.get("/stats/financial")
-async def get_earnings(date_start: date, date_end: date):
+async def get_earnings(start_date: date, end_date: date):
     '''
     Calculate the financial earnings for a specified date range.
 
@@ -378,7 +370,7 @@ async def get_earnings(date_start: date, date_end: date):
     async with app.state.pool.acquire() as connection:
 
         # Date order validation 
-        if date_end <= date_start:
+        if end_date <= start_date:
             raise HTTPException(
                 status_code=HTTP_400_BAD_REQUEST,
                 detail="End date cannot be earlier than start date"
@@ -391,7 +383,7 @@ async def get_earnings(date_start: date, date_end: date):
             FROM platnosci_jednorazowe 
             WHERE data_platnosci BETWEEN $1 AND $2
         """
-        earnings_onetime = await connection.fetchval(earnigns_onetime_query, date_start, date_end)
+        earnings_onetime = await connection.fetchval(earnigns_onetime_query, start_date, end_date)
 
         # Calculate the revenues from subscribtions
         earnings_subscribtions_query = """
@@ -400,7 +392,7 @@ async def get_earnings(date_start: date, date_end: date):
             FROM abonamenty
             WHERE data_rozpoczecia >= $1 AND data_zakonczenia <= $2
         """ 
-        earnings_subscribtions = await connection.fetchval(earnings_subscribtions_query, date_start, date_end)
+        earnings_subscribtions = await connection.fetchval(earnings_subscribtions_query, start_date, end_date)
 
         # Calculate the sum of the revenues 
         earnings_total = earnings_onetime + earnings_subscribtions
