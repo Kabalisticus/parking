@@ -18,27 +18,34 @@ class PlateNumber(BaseModel):
     """
     plate_number: constr(regex=r'^[A-Z]{2,3}-[A-Z0-9]{4,5}$')
 
-class PaymentStatus(str, Enum):
+class DateValidated(BaseModel):
     """
-    Enum representing payment statuses.
-
-    Possible values:
-        - "expects": Payment is expected.
-        - "completed": Payment is completed.
-    """
-    expects="Oczekuje"
-    completed="Zakonczono"
-
-class SubscriptionRequest(PlateNumber):
-    """
-    Pydantic model for a subscription request.
+    Pydantic model for validating a date range.
 
     Attributes:
-        plate_number (str): The plate number in the format 'XX-XXXX' or 'XXX-XXXXX'.
-        start_date (date): The start date of the subscription.
-        end_date (date): The end date of the subscription.
+        start_date (date): The start date of the date range.
+        end_date (date): The end date of the date range.
+
+    Validators:
+        - Validates that the 'end_date' is not earlier than the 'start_date'.
+          Raises an HTTP 400 Bad Request exception with a detail message
+          if the validation fails.
+
+    Example:
+        To use this model, create an instance with 'start_date' and 'end_date'
+        properties, and it will automatically validate the date range.
+
+        ```python
+        date_range = DateValidated(start_date="2023-01-01", end_date="2023-01-31")
+        ```
+
+    Raises:
+        HTTPException: If 'end_date' is earlier than 'start_date', a 400 Bad Request
+        HTTP exception is raised with the detail message "End date cannot be
+        earlier than start date."
+
     """
-    start_date: date  
+    start_date: date
     end_date: date
 
     @validator("end_date", pre=False, always=True)
@@ -51,6 +58,28 @@ class SubscriptionRequest(PlateNumber):
                 detail="End date cannot be earlier than start date"
                 )
         return end_date
+    
+
+class PaymentStatus(str, Enum):
+    """
+    Enum representing payment statuses.
+
+    Possible values:
+        - "expects": Payment is expected.
+        - "completed": Payment is completed.
+    """
+    expects="Oczekuje"
+    completed="Zakonczono"
+
+class SubscriptionRequest(PlateNumber,DateValidated):
+    """
+    Pydantic model for a subscription request.
+
+    Attributes:
+        plate_number (str): The plate number in the format 'XX-XXXX' or 'XXX-XXXXX'.
+        start_date (date): The start date of the subscription.
+        end_date (date): The end date of the subscription.
+    """
 
 
 class ExitRequest (PlateNumber):
@@ -86,7 +115,7 @@ class PaymentRequest (BaseModel):
     payment_value: condecimal(max_digits=4, decimal_places=2)
     date_payment: date 
 
-class EarningsRequest(BaseModel):
+class EarningsRequest(DateValidated):
     """
     Pydantic model for a earnings request.
 
@@ -94,21 +123,8 @@ class EarningsRequest(BaseModel):
         start_date (date): The start date for earnings check.
         end_date (date): The end date for earnings check.
     """
-    start_date: date  
-    end_date: date
 
-    @validator("end_date", pre=False, always=True)
-    def validate_dates(cls,end_date,values):
-        start_date = values.get("start_date")
-
-        if end_date <= start_date:
-            raise HTTPException(
-                status_code=HTTP_400_BAD_REQUEST,            
-                detail="End date cannot be earlier than start date"
-                )
-        return end_date
-
-class Subscription(PlateNumber):
+class Subscription(PlateNumber,DateValidated):
     """
     Pydantic model for a subscription.
 
@@ -119,19 +135,6 @@ class Subscription(PlateNumber):
         end_date (date): The end date of the subscription.
     """
     subscription_ID: int
-    start_date: date
-    end_date: date
-
-    @validator("end_date", pre=False, always=True)
-    def validate_dates(cls,end_date,values):
-        start_date = values.get("start_date")
-
-        if end_date <= start_date:
-            raise HTTPException(
-                status_code=HTTP_400_BAD_REQUEST,            
-                detail="End date cannot be earlier than start date"
-                )
-        return end_date
 
 class Vehicle(PlateNumber):
     """
@@ -154,7 +157,32 @@ class EntryExitRegister(PlateNumber):
         exit_time (Optional[date]): The date and time of exit (optional).
         amount (str): The payment amount in the format 'X.XX'.
         payment_status (PaymentStatus): The status of payment.
+
+    Validators:
+        - Validates that 'exit_time' is not earlier than 'entry_time'.
+          Raises an HTTP 400 Bad Request exception with a detail message
+          if the validation fails.
+
+    Example:
+        To use this model, create an instance with the specified attributes,
+        and it will automatically validate the exit time.
+
+        ```python
+        entry_exit_data = EntryExitRegister(
+            plate_number="XX-XXXX",
+            ticket_ID=uuid.uuid4(),
+            entry_time="2023-01-01",
+            exit_time="2023-01-02",
+            amount="10.50",
+            payment_status="completed"
+        )
+        ```
+    Raises:
+        HTTPException: If 'exit_time' is earlier than 'entry_time', a 400 Bad Request
+        HTTP exception is raised with the detail message "Exit time cannot be
+        earlier than entry time."
     """
+
     ticket_ID: UUID
     entry_time: date 
     exit_time: Optional [date]

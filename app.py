@@ -1,11 +1,11 @@
 import asyncpg
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from datetime import date
 
 from starlette.exceptions import HTTPException 
 from starlette.status import HTTP_503_SERVICE_UNAVAILABLE, HTTP_400_BAD_REQUEST
 
-from models import SubscriptionRequest, EntryRequest, ExitRequest, PaymentRequest
+from models import SubscriptionRequest, EntryRequest, ExitRequest, PaymentRequest, EarningsRequest
 
 TARIFF = 5
 ALL_PARKING_SPOTS = 50
@@ -13,7 +13,6 @@ ALL_PARKING_SPOTS = 50
 app = FastAPI()
 
 DATABASE_URL = "postgresql://parking:123test@localhost:5432/parking"
-
 
 @app.on_event("startup")
 async def startup():
@@ -355,27 +354,17 @@ async def free_spots():
 
 
 @app.get("/stats/financial")
-async def get_earnings(start_date: date, end_date: date):
+async def get_earnings(earnings_input: EarningsRequest= Depends()):
     '''
     Calculate the financial earnings for a specified date range.
 
-    :param date_start: The start date of the earnings calculation.
-    :type date_start: date
-    :param date_end: The end date of the earnings calculation.
-    :type date_end: date
+    :param earnings_input: The earnings request data.
+    :type earnings_input: EarningsRequest
 
     :return: A dictionary with total earnings, one-time payment earnings, and subscription earnings.
     :rtype: dict
     '''
     async with app.state.pool.acquire() as connection:
-
-        # Date order validation 
-        if end_date <= start_date:
-            raise HTTPException(
-                status_code=HTTP_400_BAD_REQUEST,
-                detail="End date cannot be earlier than start date"
-            )
-
 
         #Calculate the revenues from single payments
         earnigns_onetime_query = """
@@ -383,7 +372,7 @@ async def get_earnings(start_date: date, end_date: date):
             FROM platnosci_jednorazowe 
             WHERE data_platnosci BETWEEN $1 AND $2
         """
-        earnings_onetime = await connection.fetchval(earnigns_onetime_query, start_date, end_date)
+        earnings_onetime = await connection.fetchval(earnigns_onetime_query, earnings_input.start_date, earnings_input.end_date)
 
         # Calculate the revenues from subscribtions
         earnings_subscribtions_query = """
@@ -392,7 +381,7 @@ async def get_earnings(start_date: date, end_date: date):
             FROM abonamenty
             WHERE data_rozpoczecia >= $1 AND data_zakonczenia <= $2
         """ 
-        earnings_subscribtions = await connection.fetchval(earnings_subscribtions_query, start_date, end_date)
+        earnings_subscribtions = await connection.fetchval(earnings_subscribtions_query, earnings_input.start_date, earnings_input.end_date)
 
         # Calculate the sum of the revenues 
         earnings_total = earnings_onetime + earnings_subscribtions
