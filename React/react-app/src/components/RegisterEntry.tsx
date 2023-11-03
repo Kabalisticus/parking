@@ -1,11 +1,10 @@
 import { ChangeEvent, FormEvent, useState } from "react";
 
-function PaymentSubscribe() {
+function RegisterEntry() {
   // State hook to manage form data
   const [formData, setFormData] = useState({
     plate_number: "",
-    start_date: "",
-    end_date: "",
+    date_entry: "",
   });
 
   // Function to handle input changes and update form data
@@ -23,7 +22,7 @@ function PaymentSubscribe() {
       console.log("Sending JSON data: ", JSON.stringify(formData));
 
       // Send a POST request to the backend
-      const response = await fetch("http://localhost:8000/register/subscription", {
+      const response = await fetch("http://localhost:8000/register/enter", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -49,7 +48,7 @@ function PaymentSubscribe() {
     <div>
             <br></br>
             <br></br>
-      <h2>New subscription</h2>
+      <h2>Register new entry</h2>
       <br></br>
       <form onSubmit={handleSubmit}>
         {/* Input field for plate number */}
@@ -70,35 +69,22 @@ function PaymentSubscribe() {
         <div className="form-floating mb-3">
           <input
             type="date"
-            name="start_date"
-            value={formData.start_date}
+            name="date_entry"
+            value={formData.date_entry}
             onChange={handleInputChange}
             className="form-control"
             id="floatingInput"
-            placeholder="Subscription start date"
+            placeholder="Entry date"
           />
-          <label htmlFor="floatingInput">Subscription start date</label>
-        </div>
-
-        {/* Input field for subscription end date */}
-        <div className="form-floating mb-3">
-          <input
-            type="date"
-            name="end_date"
-            value={formData.end_date}
-            onChange={handleInputChange}
-            className="form-control"
-            id="floatingInput"
-            placeholder="Subscription end date"
-          />
-          <label htmlFor="floatingInput">Subscription end date</label>
+          <label htmlFor="floatingInput">Entry date</label>
         </div>
         
         {/* Submit button for the form */}
-        <button type="submit">Subscribe</button>
+        <button type="submit">Register</button>
       </form>
     </div>
   );
 }
 
-export default PaymentSubscribe;
+export default RegisterEntry;
+

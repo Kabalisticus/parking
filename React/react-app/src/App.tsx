@@ -1,5 +1,7 @@
 import NavBar from "./components/NavBar";
-import PaymentSubscribe from "./components/PaymentSubscribe";
+import RegisterEntry from "./components/RegisterEntry";
+import RegisterExit from "./components/RegisterExit";
+import RegisterSubscription from "./components/RegisterSubscription";
 
 
 function App() {
@@ -8,7 +10,9 @@ function App() {
 
     <div>
       <NavBar/>
-      <PaymentSubscribe></PaymentSubscribe>
+      <RegisterSubscription></RegisterSubscription>
+      <RegisterEntry></RegisterEntry>
+      <RegisterExit></RegisterExit>
     </div>
   );
 }
