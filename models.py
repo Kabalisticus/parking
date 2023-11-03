@@ -102,7 +102,7 @@ class EntryRequest (PlateNumber):
     """
     date_entry: date
 
-class PaymentRequest (BaseModel):
+class OnetimePaymentRequest (BaseModel):
     """
     Pydantic model for a payment request.
 
@@ -112,8 +112,20 @@ class PaymentRequest (BaseModel):
         date_payment (date): The date of the payment.
     """
     ticket_number: int
-    payment_value: condecimal(max_digits=4, decimal_places=2)
+    payment_value: condecimal(max_digits=6, decimal_places=2)
     date_payment: date 
+
+class SubscriptionPaymentRequest (BaseModel):
+    """
+    Pydantic model for a subscription subscpayment request.
+
+    Attributes:
+  
+    """
+    subscription_ID: int
+    payment_value: condecimal(max_digits=6, decimal_places=2)
+    date_payment: date 
+
 
 class EarningsRequest(DateValidated):
     """
@@ -186,7 +198,7 @@ class EntryExitRegister(PlateNumber):
     ticket_ID: UUID
     entry_time: date 
     exit_time: Optional [date]
-    amount: condecimal(max_digits=4, decimal_places=2)
+    amount: condecimal(max_digits=6, decimal_places=2)
     payment_status: PaymentStatus
 
     @validator("exit_time", pre=False, always=True)
@@ -212,5 +224,5 @@ class Payments(BaseModel):
     """
     payment_ID: UUID
     ticket_number: int
-    amount: condecimal(max_digits=4, decimal_places=2)
+    amount: condecimal(max_digits=6, decimal_places=2)
     payment_status: PaymentStatus
