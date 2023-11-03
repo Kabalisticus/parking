@@ -1,0 +1,9 @@
+{
+  "name": "React",
+  "lockfileVersion": 2,
+  "requires": true,
+  "packages": {},
+  "dependencies": {
+    "bootstrap": "^5.3.2"
+  }
+}
