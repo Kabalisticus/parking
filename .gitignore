@@ -1,15 +1,4 @@
-# własne
-app_copy_18.10.py
-app.py
-models.py
-Next steps.txt
-page.html
-pytest.ini
-SQL/
-.vscode/
-Backups/
-Temp/
-test_app.py
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
